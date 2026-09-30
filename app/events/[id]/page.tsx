@@ -26,7 +26,6 @@ export default function EventDetailsPage() {
   const router = useRouter();
 
   const [event, setEvent] = useState<Event | null>(null);
-
   const [quantity, setQuantity] = useState(1);
 
   const [loading, setLoading] = useState(true);
@@ -35,6 +34,9 @@ export default function EventDetailsPage() {
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
 
+  /*
+   * Get event ID safely.
+   */
   const eventId =
     typeof params?.id === "string"
       ? params.id
@@ -42,6 +44,9 @@ export default function EventDetailsPage() {
       ? params.id[0]
       : "";
 
+  /*
+   * Load event.
+   */
   useEffect(() => {
     if (!eventId) return;
 
@@ -54,6 +59,8 @@ export default function EventDetailsPage() {
 
         const data = response.data;
 
+        console.log("EVENT API RESPONSE:", data);
+
         if (!data || typeof data !== "object") {
           throw new Error("Invalid event response.");
         }
@@ -63,6 +70,8 @@ export default function EventDetailsPage() {
           ticket: data.ticket || {},
         });
       } catch (err: any) {
+        console.error("EVENT LOAD ERROR:", err);
+
         setError(
           err?.response?.data?.error ||
             err?.response?.data?.detail ||
@@ -77,10 +86,16 @@ export default function EventDetailsPage() {
     loadEvent();
   }, [eventId]);
 
+  /*
+   * BOOK EVENT
+   */
   async function handleBooking() {
     setError("");
     setMessage("");
 
+    /*
+     * Check login.
+     */
     if (!isLoggedIn()) {
       router.push("/login");
       return;
@@ -91,52 +106,93 @@ export default function EventDetailsPage() {
       return;
     }
 
-    const available = event.ticket?.available ?? 0;
+    const available = Number(event.ticket?.available ?? 0);
 
+    /*
+     * Check availability.
+     */
     if (available <= 0) {
       setError("This event is sold out.");
       return;
     }
 
+    /*
+     * Prevent booking more tickets
+     * than available.
+     */
     if (quantity > available) {
       setError(
-        `Only ${available} ticket${
-          available === 1 ? "" : "s"
+        `Only ${available} ${
+          available === 1 ? "ticket" : "tickets"
         } available.`
       );
 
-      setQuantity(Math.max(1, available));
+      setQuantity(available);
+
       return;
     }
 
     setBooking(true);
 
     try {
+      /*
+       * Send booking request.
+       */
       const response = await api.post(
         `/bookings/${eventId}/`,
         {
-          quantity,
+          quantity: quantity,
         }
       );
 
+      console.log("BOOKING RESPONSE:", response.data);
+
       /*
-       * IMPORTANT:
-       * Update the available tickets immediately
-       * after successful booking.
+       * ------------------------------------------------
+       * SUCCESS
+       * ------------------------------------------------
+       */
+
+      /*
+       * If backend returns the new available count,
+       * use that value.
+       *
+       * Example backend response:
+       *
+       * {
+       *   "message": "Booking successful",
+       *   "available": 7
+       * }
+       */
+
+      const backendAvailable =
+        response.data?.available ??
+        response.data?.event?.ticket?.available ??
+        response.data?.event?.available ??
+        null;
+
+      /*
+       * If backend gives us the new count,
+       * use it.
+       *
+       * Otherwise calculate it locally.
+       */
+      const newAvailable =
+        backendAvailable !== null
+          ? Number(backendAvailable)
+          : Math.max(0, available - quantity);
+
+      /*
+       * Update event state immediately.
        */
       setEvent((currentEvent) => {
-        if (!currentEvent) return currentEvent;
-
-        const currentAvailable =
-          currentEvent.ticket?.available ?? 0;
-
-        const newAvailable = Math.max(
-          0,
-          currentAvailable - quantity
-        );
+        if (!currentEvent) {
+          return currentEvent;
+        }
 
         return {
           ...currentEvent,
+
           ticket: {
             ...(currentEvent.ticket || {}),
             available: newAvailable,
@@ -144,21 +200,39 @@ export default function EventDetailsPage() {
         };
       });
 
-      setMessage(
-        response.data?.message ||
-          `Booking successful! ${quantity} ticket${
-            quantity === 1 ? "" : "s"
-          } booked.`
-      );
-
       /*
-       * Reset quantity after successful booking.
+       * Reset quantity.
        */
       setQuantity(1);
+
+      /*
+       * Show success message.
+       */
+      setMessage(
+        response.data?.message ||
+          `Booking successful! ${quantity} ${
+            quantity === 1 ? "ticket" : "tickets"
+          } booked.`
+      );
     } catch (err: any) {
+      console.error("BOOKING ERROR:", err);
+
+      /*
+       * IMPORTANT:
+       * Print the complete backend response.
+       *
+       * This will tell us why the API
+       * is returning 400.
+       */
+      console.error(
+        "BACKEND ERROR RESPONSE:",
+        err?.response?.data
+      );
+
       setError(
         err?.response?.data?.error ||
           err?.response?.data?.detail ||
+          err?.response?.data?.message ||
           "Booking failed."
       );
     } finally {
@@ -166,10 +240,15 @@ export default function EventDetailsPage() {
     }
   }
 
+  /*
+   * Increase quantity.
+   */
   function increaseQuantity() {
     if (!event) return;
 
-    const available = event.ticket?.available ?? 0;
+    const available = Number(
+      event.ticket?.available ?? 0
+    );
 
     setQuantity((current) => {
       if (current >= available) {
@@ -180,10 +259,18 @@ export default function EventDetailsPage() {
     });
   }
 
+  /*
+   * Decrease quantity.
+   */
   function decreaseQuantity() {
-    setQuantity((current) => Math.max(1, current - 1));
+    setQuantity((current) =>
+      Math.max(1, current - 1)
+    );
   }
 
+  /*
+   * LOADING
+   */
   if (loading) {
     return (
       <main className="page">
@@ -195,6 +282,9 @@ export default function EventDetailsPage() {
     );
   }
 
+  /*
+   * ERROR
+   */
   if (error && !event) {
     return (
       <main className="page">
@@ -220,7 +310,12 @@ export default function EventDetailsPage() {
     return null;
   }
 
-  const price = Number(event.ticket?.price ?? 0);
+  /*
+   * EVENT DATA
+   */
+  const price = Number(
+    event.ticket?.price ?? 0
+  );
 
   const available = Math.max(
     0,
@@ -228,8 +323,7 @@ export default function EventDetailsPage() {
   );
 
   /*
-   * Make sure quantity can never stay above
-   * the current available amount.
+   * Keep quantity within available tickets.
    */
   const safeQuantity =
     available > 0
@@ -238,16 +332,33 @@ export default function EventDetailsPage() {
 
   const total = price * safeQuantity;
 
+  /*
+   * Format date.
+   */
   const formattedDate = event.date
-    ? new Date(event.date).toLocaleString("en-IN", {
-        weekday: "short",
-        day: "numeric",
-        month: "short",
-        year: "numeric",
-        hour: "numeric",
-        minute: "2-digit",
-      })
+    ? new Date(event.date).toLocaleString(
+        "en-IN",
+        {
+          weekday: "short",
+          day: "numeric",
+          month: "short",
+          year: "numeric",
+          hour: "numeric",
+          minute: "2-digit",
+        }
+      )
     : "Date to be announced";
+
+  /*
+   * Progress percentage.
+   */
+  const progress =
+    event.capacity && event.capacity > 0
+      ? Math.min(
+          100,
+          (available / event.capacity) * 100
+        )
+      : 0;
 
   return (
     <main className="page">
@@ -255,6 +366,7 @@ export default function EventDetailsPage() {
       <div className="background backgroundTwo" />
 
       <div className="container">
+
         {/* BACK */}
         <button
           type="button"
@@ -265,8 +377,10 @@ export default function EventDetailsPage() {
         </button>
 
         <section className="hero">
+
           {/* EVENT INFORMATION */}
           <div className="heroContent">
+
             <span className="category">
               {event.category || "Event"}
             </span>
@@ -279,31 +393,48 @@ export default function EventDetailsPage() {
             </p>
 
             <div className="meta">
+
+              {/* LOCATION */}
               <div className="metaItem">
-                <span className="metaIcon">⌖</span>
+                <span className="metaIcon">
+                  ⌖
+                </span>
 
                 <div>
                   <small>LOCATION</small>
+
                   <strong>
-                    {event.city || "Location TBA"}
+                    {event.city ||
+                      "Location TBA"}
                   </strong>
                 </div>
               </div>
 
+              {/* DATE */}
               <div className="metaItem">
-                <span className="metaIcon">◷</span>
+                <span className="metaIcon">
+                  ◷
+                </span>
 
                 <div>
                   <small>DATE</small>
-                  <strong>{formattedDate}</strong>
+
+                  <strong>
+                    {formattedDate}
+                  </strong>
                 </div>
               </div>
 
+              {/* AVAILABILITY */}
               <div className="metaItem">
-                <span className="metaIcon">◇</span>
+                <span className="metaIcon">
+                  ◇
+                </span>
 
                 <div>
-                  <small>AVAILABILITY</small>
+                  <small>
+                    AVAILABILITY
+                  </small>
 
                   <strong
                     className={
@@ -322,67 +453,83 @@ export default function EventDetailsPage() {
                   </strong>
                 </div>
               </div>
+
             </div>
           </div>
 
           {/* BOOKING CARD */}
           <aside className="bookingCard">
+
             <p className="smallTitle">
               BOOK YOUR EXPERIENCE
             </p>
 
+            {/* PRICE */}
             <div className="price">
               {price === 0
                 ? "Free"
-                : `₹${price.toLocaleString("en-IN")}`}
+                : `₹${price.toLocaleString(
+                    "en-IN"
+                  )}`}
 
               {price > 0 && (
-                <span>/ ticket</span>
+                <span>
+                  / ticket
+                </span>
               )}
             </div>
 
             {/* AVAILABILITY */}
             <div className="availabilityBox">
-              <div className="availabilityTop">
-                <span>Tickets remaining</span>
 
-                <strong>{available}</strong>
+              <div className="availabilityTop">
+
+                <span>
+                  Tickets remaining
+                </span>
+
+                <strong>
+                  {available}
+                </strong>
+
               </div>
 
               <div className="progress">
+
                 <div
                   className="progressBar"
                   style={{
-                    width:
-                      event.capacity &&
-                      event.capacity > 0
-                        ? `${Math.min(
-                            100,
-                            (available /
-                              event.capacity) *
-                              100
-                          )}%`
-                        : "0%",
+                    width: `${progress}%`,
                   }}
                 />
+
               </div>
+
             </div>
 
-            {/* QUANTITY */}
+            {/* QUANTITY LABEL */}
             <div className="quantityLabel">
-              <span>Quantity</span>
+
+              <span>
+                Quantity
+              </span>
 
               <small>
                 {available > 0
                   ? `${available} available`
                   : "Sold out"}
               </small>
+
             </div>
 
+            {/* QUANTITY */}
             <div className="quantity">
+
               <button
                 type="button"
-                onClick={decreaseQuantity}
+                onClick={
+                  decreaseQuantity
+                }
                 disabled={
                   booking ||
                   safeQuantity <= 1
@@ -398,7 +545,9 @@ export default function EventDetailsPage() {
 
               <button
                 type="button"
-                onClick={increaseQuantity}
+                onClick={
+                  increaseQuantity
+                }
                 disabled={
                   booking ||
                   available === 0 ||
@@ -408,11 +557,15 @@ export default function EventDetailsPage() {
               >
                 +
               </button>
+
             </div>
 
             {/* TOTAL */}
             <div className="total">
-              <span>Total</span>
+
+              <span>
+                Total
+              </span>
 
               <strong>
                 {price === 0
@@ -421,6 +574,7 @@ export default function EventDetailsPage() {
                       "en-IN"
                     )}`}
               </strong>
+
             </div>
 
             {/* ERROR */}
@@ -437,7 +591,7 @@ export default function EventDetailsPage() {
               </div>
             )}
 
-            {/* BOOK */}
+            {/* BOOK BUTTON */}
             <button
               type="button"
               className="bookButton"
@@ -452,25 +606,26 @@ export default function EventDetailsPage() {
                 ? "Booking..."
                 : available === 0
                 ? "Sold out"
-                : `Book ${
-                    safeQuantity
-                  } ticket${
+                : `Book ${safeQuantity} ${
                     safeQuantity === 1
-                      ? ""
-                      : "s"
+                      ? "ticket"
+                      : "tickets"
                   } →`}
             </button>
 
             {available > 0 && (
               <p className="secureText">
-                🔒 Secure booking · Instant confirmation
+                🔒 Secure booking · Instant
+                confirmation
               </p>
             )}
+
           </aside>
         </section>
       </div>
 
       <style jsx>{`
+
         .page {
           min-height: 100vh;
           background: #f5f1ea;
@@ -540,7 +695,12 @@ export default function EventDetailsPage() {
           border: 1px solid #ded4c9;
           backdrop-filter: blur(20px);
           box-shadow:
-            0 25px 70px rgba(70, 55, 40, 0.08);
+            0 25px 70px rgba(
+              70,
+              55,
+              40,
+              0.08
+            );
         }
 
         .category {
@@ -556,7 +716,11 @@ export default function EventDetailsPage() {
         }
 
         h1 {
-          font-size: clamp(42px, 6vw, 76px);
+          font-size: clamp(
+            42px,
+            6vw,
+            76px
+          );
           line-height: 0.98;
           letter-spacing: -3px;
           margin: 28px 0;
@@ -583,7 +747,12 @@ export default function EventDetailsPage() {
           gap: 10px;
           padding: 13px 16px;
           border-radius: 14px;
-          background: rgba(255, 255, 255, 0.7);
+          background: rgba(
+            255,
+            255,
+            255,
+            0.7
+          );
           border: 1px solid #e1d8ce;
         }
 
@@ -626,7 +795,12 @@ export default function EventDetailsPage() {
           background: #332d27;
           color: #f8f3ed;
           box-shadow:
-            0 25px 70px rgba(50, 40, 30, 0.2);
+            0 25px 70px rgba(
+              50,
+              40,
+              30,
+              0.2
+            );
         }
 
         .smallTitle {
@@ -655,7 +829,12 @@ export default function EventDetailsPage() {
         .availabilityBox {
           padding: 14px;
           border-radius: 14px;
-          background: rgba(255, 255, 255, 0.045);
+          background: rgba(
+            255,
+            255,
+            255,
+            0.045
+          );
           border: 1px solid #51483f;
           margin-bottom: 20px;
         }
@@ -689,7 +868,8 @@ export default function EventDetailsPage() {
           height: 100%;
           border-radius: inherit;
           background: #e5b77d;
-          transition: width 0.3s ease;
+          transition:
+            width 0.4s ease;
         }
 
         /* QUANTITY */
@@ -731,11 +911,16 @@ export default function EventDetailsPage() {
           color: white;
           font-size: 20px;
           cursor: pointer;
-          transition: 0.2s ease;
+          transition:
+            background 0.2s ease,
+            transform 0.2s ease;
         }
 
-        .quantity button:hover:not(:disabled) {
+        .quantity button:hover:not(
+          :disabled
+        ) {
           background: #65594e;
+          transform: scale(1.04);
         }
 
         .quantity button:disabled {
@@ -768,7 +953,7 @@ export default function EventDetailsPage() {
           font-size: 17px;
         }
 
-        /* BUTTON */
+        /* BOOK BUTTON */
 
         .bookButton {
           width: 100%;
@@ -785,7 +970,9 @@ export default function EventDetailsPage() {
             background 0.2s ease;
         }
 
-        .bookButton:hover:not(:disabled) {
+        .bookButton:hover:not(
+          :disabled
+        ) {
           background: #f0c58e;
           transform: translateY(-2px);
         }
@@ -830,7 +1017,12 @@ export default function EventDetailsPage() {
           padding: 40px;
           text-align: center;
           border-radius: 25px;
-          background: rgba(255, 255, 255, 0.7);
+          background: rgba(
+            255,
+            255,
+            255,
+            0.7
+          );
           border: 1px solid #ded4ca;
         }
 
@@ -841,7 +1033,8 @@ export default function EventDetailsPage() {
           border: 3px solid #ded4ca;
           border-top-color: #80664b;
           border-radius: 50%;
-          animation: spin 0.7s linear infinite;
+          animation:
+            spin 0.7s linear infinite;
         }
 
         .loading p {
@@ -849,7 +1042,7 @@ export default function EventDetailsPage() {
           font-size: 13px;
         }
 
-        /* ERROR */
+        /* ERROR CARD */
 
         .errorCard {
           max-width: 500px;
@@ -857,7 +1050,12 @@ export default function EventDetailsPage() {
           padding: 45px;
           text-align: center;
           border-radius: 25px;
-          background: rgba(255, 255, 255, 0.75);
+          background: rgba(
+            255,
+            255,
+            255,
+            0.75
+          );
           border: 1px solid #ded4ca;
         }
 
@@ -900,6 +1098,8 @@ export default function EventDetailsPage() {
           }
         }
 
+        /* TABLET */
+
         @media (max-width: 850px) {
           .hero {
             grid-template-columns: 1fr;
@@ -919,6 +1119,8 @@ export default function EventDetailsPage() {
             box-sizing: border-box;
           }
         }
+
+        /* MOBILE */
 
         @media (max-width: 600px) {
           .page {
